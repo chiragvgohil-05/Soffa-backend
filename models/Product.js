@@ -4,8 +4,8 @@ const productSchema = new mongoose.Schema(
     {
         name: { type: String, required: true },
         price: { type: Number, required: true },
-        originalPrice: { type: Number },
-        imageUrl: { type: String },
+        originalPrice: { type: Number, required: true },
+        images: [{ type: String }],   // ✅ multiple image URLs
         isNew: { type: Boolean, default: false },
         discount: { type: Number, default: 0 },
         inStock: { type: Boolean, default: true },

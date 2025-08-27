@@ -1,27 +1,55 @@
 const Product = require("../models/Product");
 const { successResponse, errorResponse } = require("../helpers/responseHelper");
+const cloudinary = require("../config/cloudinary");
 
 // CREATE Product
 exports.createProduct = async (req, res) => {
     try {
         let { originalPrice, discount, ...rest } = req.body;
 
-        // Ensure originalPrice exists
         if (!originalPrice) {
             return errorResponse(res, "Original price is required", 400);
         }
 
-        // Convert discount to number (just in case)
         discount = Number(discount) || 0;
-
-        // Calculate price
+        originalPrice = Number(originalPrice);
         const price = originalPrice - (originalPrice * discount) / 100;
+
+        // ✅ Upload all files to Cloudinary
+        let images = [];
+        if (req.files && req.files.length > 0) {
+            for (const file of req.files) {
+                const uploadRes = await cloudinary.uploader.upload_stream(
+                    { folder: "products" },
+                    (error, result) => {
+                        if (error) throw new Error(error.message);
+                        return result;
+                    }
+                );
+
+                // Since upload_stream requires piping buffer:
+                await new Promise((resolve, reject) => {
+                    const stream = cloudinary.uploader.upload_stream(
+                        { folder: "products" },
+                        (error, result) => {
+                            if (error) reject(error);
+                            else {
+                                images.push(result.secure_url);
+                                resolve();
+                            }
+                        }
+                    );
+                    stream.end(file.buffer);
+                });
+            }
+        }
 
         const product = new Product({
             ...rest,
             originalPrice,
             discount,
-            price // ✅ auto calculated
+            price,
+            images
         });
 
         await product.save();
