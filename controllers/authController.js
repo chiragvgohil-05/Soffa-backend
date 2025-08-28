@@ -8,19 +8,16 @@ const cloudinary = require("../config/cloudinary");
 exports.registerUser = async (req, res) => {
     const { name, email, password, role } = req.body;
     try {
-        let user = await User.findOne({ email });
+        let user = await User.findOne({ email: email.toLowerCase() });
         if (user) return errorResponse(res, "User already exists", 400);
 
-        const salt = await bcrypt.genSalt(10);
-        const hashedPassword = await bcrypt.hash(password, salt);
-
-        // Allow "Admin" only if you control it (example: via environment check)
+        // No need to hash manually → schema will handle it
         let assignedRole = "User";
         if (role === "Admin" && process.env.ALLOW_ADMIN_SIGNUP === "true") {
             assignedRole = "Admin";
         }
 
-        user = new User({ name, email, password: hashedPassword, role: assignedRole });
+        user = new User({ name, email, password, role: assignedRole });
         await user.save();
 
         return successResponse(res, "User registered successfully.", {
