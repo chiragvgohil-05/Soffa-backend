@@ -2,6 +2,20 @@ const Product = require("../models/Product");
 const { successResponse, errorResponse } = require("../helpers/responseHelper");
 const cloudinary = require("../config/cloudinary");
 
+// ✅ Helper: upload buffer to Cloudinary with async/await
+const uploadToCloudinary = (fileBuffer, folder = "products") => {
+    return new Promise((resolve, reject) => {
+        const stream = cloudinary.uploader.upload_stream(
+            { folder },
+            (error, result) => {
+                if (error) return reject(error);
+                resolve(result);
+            }
+        );
+        stream.end(fileBuffer);
+    });
+};
+
 // CREATE Product
 exports.createProduct = async (req, res) => {
     try {
@@ -19,28 +33,13 @@ exports.createProduct = async (req, res) => {
         let images = [];
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
-                const uploadRes = await cloudinary.uploader.upload_stream(
-                    { folder: "products" },
-                    (error, result) => {
-                        if (error) throw new Error(error.message);
-                        return result;
-                    }
-                );
-
-                // Since upload_stream requires piping buffer:
-                await new Promise((resolve, reject) => {
-                    const stream = cloudinary.uploader.upload_stream(
-                        { folder: "products" },
-                        (error, result) => {
-                            if (error) reject(error);
-                            else {
-                                images.push(result.secure_url);
-                                resolve();
-                            }
-                        }
-                    );
-                    stream.end(file.buffer);
-                });
+                try {
+                    const result = await uploadToCloudinary(file.buffer);
+                    images.push(result.secure_url);
+                } catch (uploadErr) {
+                    console.error("Cloudinary Upload Error:", uploadErr);
+                    return errorResponse(res, "Image upload failed", 500);
+                }
             }
         }
 
@@ -49,13 +48,14 @@ exports.createProduct = async (req, res) => {
             originalPrice,
             discount,
             price,
-            images
+            images,
         });
 
         await product.save();
         return successResponse(res, "Product created successfully", product);
     } catch (err) {
-        return errorResponse(res, err.message);
+        console.error("Product creation error:", err);
+        return errorResponse(res, err.message, 500);
     }
 };
 
@@ -65,7 +65,7 @@ exports.getProducts = async (req, res) => {
         const products = await Product.find();
         return successResponse(res, "Products fetched successfully", products);
     } catch (err) {
-        return errorResponse(res, err.message);
+        return errorResponse(res, err.message, 500);
     }
 };
 
@@ -76,7 +76,7 @@ exports.getProductById = async (req, res) => {
         if (!product) return errorResponse(res, "Product not found", 404);
         return successResponse(res, "Product fetched successfully", product);
     } catch (err) {
-        return errorResponse(res, err.message);
+        return errorResponse(res, err.message, 500);
     }
 };
 
@@ -88,25 +88,59 @@ exports.updateProduct = async (req, res) => {
         const existingProduct = await Product.findById(req.params.id);
         if (!existingProduct) return errorResponse(res, "Product not found", 404);
 
-        // If discount or originalPrice provided → recalc price
-        if (originalPrice !== undefined || discount !== undefined) {
-            originalPrice = originalPrice !== undefined ? originalPrice : existingProduct.originalPrice;
-            discount = discount !== undefined ? discount : existingProduct.discount;
-            rest.price = originalPrice - (originalPrice * discount) / 100;
+        let images = existingProduct.images || [];
+
+        // ✅ Handle removed images (sent as array or multiple fields)
+        let removedImages = [];
+        if (req.body.removedImages) {
+            if (Array.isArray(req.body.removedImages)) {
+                removedImages = req.body.removedImages;
+            } else {
+                removedImages = [req.body.removedImages]; // single field case
+            }
         }
+
+        if (removedImages.length > 0) {
+            for (const imgUrl of removedImages) {
+                try {
+                    // safer if you store public_id, but for now parse from URL
+                    const publicId = imgUrl.split("/").pop().split(".")[0];
+                    await cloudinary.uploader.destroy(`products/${publicId}`);
+                } catch (err) {
+                    console.error("Cloudinary delete error:", err);
+                }
+            }
+
+            images = images.filter(img => !removedImages.includes(img));
+        }
+
+        // ✅ Handle new uploads
+        if (req.files && req.files.length > 0) {
+            let newImages = [];
+            for (const file of req.files) {
+                const result = await uploadToCloudinary(file.buffer);
+                newImages.push(result.secure_url);
+            }
+            images = [...images, ...newImages];
+        }
+
+        // ✅ Recalculate price if needed
+        originalPrice = originalPrice !== undefined ? Number(originalPrice) : existingProduct.originalPrice;
+        discount = discount !== undefined ? Number(discount) : existingProduct.discount;
+        rest.price = originalPrice - (originalPrice * discount) / 100;
 
         const product = await Product.findByIdAndUpdate(
             req.params.id,
-            { ...rest, originalPrice, discount },
+            { ...rest, originalPrice, discount, images },
             { new: true }
         );
 
         return successResponse(res, "Product updated successfully", product);
     } catch (err) {
-        return errorResponse(res, err.message);
+        console.error("Product update error:", err);
+        return errorResponse(res, err.message, 500);
     }
 };
-
 // DELETE Product
 exports.deleteProduct = async (req, res) => {
     try {
@@ -114,6 +148,6 @@ exports.deleteProduct = async (req, res) => {
         if (!product) return errorResponse(res, "Product not found", 404);
         return successResponse(res, "Product deleted successfully", product);
     } catch (err) {
-        return errorResponse(res, err.message);
+        return errorResponse(res, err.message, 500);
     }
 };
