@@ -33,6 +33,7 @@ exports.registerUser = async (req, res) => {
 };
 
 // LOGIN (Admin + User both from DB)
+// LOGIN (Admin + User both from DB)
 exports.loginUser = async (req, res) => {
     const { email, password } = req.body;
     try {
@@ -41,6 +42,10 @@ exports.loginUser = async (req, res) => {
 
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) return errorResponse(res, "Invalid credentials", 400);
+
+        // ✅ Update last login
+        user.lastLogin = new Date();
+        await user.save();
 
         const token = jwt.sign(
             { id: user._id, role: user.role },
@@ -56,6 +61,7 @@ exports.loginUser = async (req, res) => {
                 email: user.email,
                 role: user.role,
                 image: user.image || null,
+                lastLogin: user.lastLogin, // ✅ include in response
             },
         });
     } catch (err) {
@@ -142,5 +148,14 @@ exports.editProfile = async (req, res) => {
     } catch (err) {
         console.error("Edit Profile Error:", err);
         return errorResponse(res, "Server Error", 500);
+    }
+};
+
+exports.getAllUsers = async (req, res) => {
+    try {
+        const users = await User.find().select("-password");
+        return successResponse(res, "Users fetched successfully", users);
+    } catch (err) {
+        return errorResponse(res, err.message, 500);
     }
 };

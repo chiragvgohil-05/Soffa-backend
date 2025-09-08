@@ -18,6 +18,7 @@ connectDB();
 // Routes
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/products", require("./routes/product")); // ✅ Added product routes
+app.use("/api/admin", require("./routes/adminRoutes")); // ✅ Added product routes
 
 // Default route (optional)
 app.get("/", (req, res) => {
