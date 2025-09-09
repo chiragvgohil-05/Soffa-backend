@@ -3,7 +3,13 @@ const router = express.Router();
 const cartController = require("../controllers/cartController");
 const authMiddleware = require("../middleware/authMiddleware");
 
-// User must be logged in
+// Add these routes
+router.post("/create-order", authMiddleware(), cartController.createRazorpayOrder);
+router.post("/verify-payment", authMiddleware(), cartController.verifyPayment);
+router.get("/payment/:orderId", authMiddleware(), cartController.getPaymentDetails);
+router.get("/orders", authMiddleware(), cartController.getAllOrders);
+
+// Your existing routes
 router.post("/add", authMiddleware(), cartController.addToCart);
 router.get("/", authMiddleware(), cartController.getCart);
 router.post("/remove", authMiddleware(), cartController.removeFromCart);

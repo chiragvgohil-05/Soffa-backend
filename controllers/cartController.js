@@ -1,17 +1,23 @@
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
+const Order = require("../models/Order"); // You'll need to create an Order model
+const Razorpay = require("razorpay");
+const crypto = require("crypto");
 const { successResponse, errorResponse } = require("../helpers/responseHelper");
 
-// Add to Cart
+// Initialize Razorpay instance
+const razorpay = new Razorpay({
+    key_id: process.env.RAZORPAY_KEY_ID,
+    key_secret: process.env.RAZORPAY_KEY_SECRET,
+});
+
 // Add to Cart
 exports.addToCart = async (req, res) => {
     try {
-        const userId = req.user.id; // from authMiddleware
+        const userId = req.user.id;
         const { productId, quantity } = req.body;
 
         if (!productId) return errorResponse(res, "Product ID is required", 400);
-
-        // Allow negative quantities for decreasing items
         if (quantity === 0) return errorResponse(res, "Quantity must not be zero", 400);
 
         const product = await Product.findById(productId);
@@ -19,13 +25,11 @@ exports.addToCart = async (req, res) => {
 
         let cart = await Cart.findOne({ user: userId });
 
-        // If user has no cart yet and trying to add negative quantity
         if (!cart && quantity < 0) {
             return errorResponse(res, "Cannot decrease quantity of item not in cart", 400);
         }
 
         if (!cart) {
-            // If user has no cart yet → create new (only if quantity is positive)
             if (quantity < 1) {
                 return errorResponse(res, "Cannot add negative quantity to empty cart", 400);
             }
@@ -36,34 +40,28 @@ exports.addToCart = async (req, res) => {
                 totalPrice: product.price * quantity,
             });
         } else {
-            // Check if product already in cart
             const itemIndex = cart.items.findIndex(
                 (item) => item.product.toString() === productId
             );
 
             if (itemIndex > -1) {
-                // Update quantity if product exists
                 const newQuantity = cart.items[itemIndex].quantity + quantity;
 
-                // Prevent negative quantity
                 if (newQuantity < 0) {
                     return errorResponse(res, "Quantity cannot be negative", 400);
                 }
 
-                // Remove item if quantity becomes zero
                 if (newQuantity === 0) {
                     cart.items.splice(itemIndex, 1);
                 } else {
                     cart.items[itemIndex].quantity = newQuantity;
-                    cart.items[itemIndex].price = product.price; // update price if product price changed
+                    cart.items[itemIndex].price = product.price;
                 }
             } else {
-                // Cannot add negative quantity for new item
                 if (quantity < 1) {
                     return errorResponse(res, "Cannot add negative quantity for new item", 400);
                 }
 
-                // Push new item
                 cart.items.push({
                     product: product._id,
                     quantity,
@@ -71,7 +69,6 @@ exports.addToCart = async (req, res) => {
                 });
             }
 
-            // Recalculate total price
             cart.totalPrice = cart.items.reduce(
                 (acc, item) => acc + item.quantity * item.price,
                 0
@@ -135,22 +132,124 @@ exports.clearCart = async (req, res) => {
     }
 };
 
-const updateQuantity = async (productId, delta) => {
-    const item = cart.find((it) => it.product._id === productId);
-    if (!item) return;
-
-    const newQty = item.quantity + delta;
-
-    // Validate on frontend first
-    if (newQty <= 0) {
-        await removeFromCart(productId);
-    } else {
-        try {
-            await addToCart(productId, delta);
-        } catch (err) {
-            // Handle API error (e.g., show toast message)
-            console.error("Failed to update quantity:", err);
-            toast.error("Failed to update quantity");
+// Create Razorpay Order
+exports.createRazorpayOrder = async (req, res) => {
+    try {
+        const cart = await Cart.findOne({ user: req.user.id }).populate("items.product");
+        if (!cart || cart.items.length === 0) {
+            return errorResponse(res, "Cart is empty", 400);
         }
+
+        // Calculate shipping
+        const shipping = cart.totalPrice > 1000 ? 0 : 99;
+        const amount = Math.round((cart.totalPrice + shipping) * 100); // Convert to paise
+
+        const options = {
+            amount: amount,
+            currency: "INR",
+            receipt: `receipt_${Date.now()}`,
+            payment_capture: 1, // Auto capture payment
+        };
+
+        const order = await razorpay.orders.create(options);
+
+        // Create order in database with pending status
+        const dbOrder = new Order({
+            user: req.user.id,
+            items: cart.items,
+            totalAmount: amount / 100, // Convert back to rupees
+            razorpayOrderId: order.id,
+            status: "pending",
+        });
+
+        await dbOrder.save();
+
+        return successResponse(res, "Razorpay order created", {
+            order: order,
+            orderId: dbOrder._id,
+        });
+    } catch (err) {
+        console.error("Razorpay order error:", err);
+        return errorResponse(res, err.message, 500);
+    }
+};
+
+// Verify Payment
+exports.verifyPayment = async (req, res) => {
+    try {
+        const { razorpay_order_id, razorpay_payment_id, razorpay_signature, orderId } = req.body;
+
+        // Verify signature
+        const generatedSignature = crypto
+            .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+            .update(razorpay_order_id + "|" + razorpay_payment_id)
+            .digest("hex");
+
+        if (generatedSignature !== razorpay_signature) {
+            return errorResponse(res, "Payment verification failed", 400);
+        }
+
+        // Update order status in database
+        const order = await Order.findById(orderId);
+        if (!order) {
+            return errorResponse(res, "Order not found", 404);
+        }
+
+        order.status = "completed";
+        order.razorpayPaymentId = razorpay_payment_id;
+        order.paidAt = new Date();
+        await order.save();
+
+        // Clear the user's cart
+        await Cart.findOneAndUpdate(
+            { user: req.user.id },
+            { items: [], totalPrice: 0 }
+        );
+
+        return successResponse(res, "Payment verified successfully", { order });
+    } catch (err) {
+        console.error("Payment verification error:", err);
+        return errorResponse(res, err.message, 500);
+    }
+};
+
+// Get Payment Details
+exports.getPaymentDetails = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        const order = await Order.findById(orderId).populate("items.product");
+
+        if (!order) {
+            return errorResponse(res, "Order not found", 404);
+        }
+
+        return successResponse(res, "Order details fetched", { order });
+    } catch (err) {
+        return errorResponse(res, err.message, 500);
+    }
+};
+
+exports.getAllOrders = async (req, res) => {
+    try {
+        // Optional: add query filters like status, date range, user
+        const { status, userId, fromDate, toDate } = req.query;
+
+        let filter = {};
+        if (status) filter.status = status;
+        if (userId) filter.user = userId;
+        if (fromDate || toDate) {
+            filter.createdAt = {};
+            if (fromDate) filter.createdAt.$gte = new Date(fromDate);
+            if (toDate) filter.createdAt.$lte = new Date(toDate);
+        }
+
+        const orders = await Order.find(filter)
+            .populate("user", "name email") // fetch user info
+            .populate("items.product", "name price"); // fetch product info
+
+        return successResponse(res, "Orders fetched successfully", { orders });
+    } catch (err) {
+        console.error("Get all orders error:", err);
+        return errorResponse(res, err.message, 500);
     }
 };
