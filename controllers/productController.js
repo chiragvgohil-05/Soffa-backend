@@ -151,3 +151,30 @@ exports.deleteProduct = async (req, res) => {
         return errorResponse(res, err.message, 500);
     }
 };
+
+exports.searchProducts = async (req, res) => {
+    console.log("Incoming query:", req.query);
+    try {
+        const { query } = req.query;
+        if (!query || query.trim() === "") {
+            return errorResponse(res, "Search query is required", 400);
+        }
+
+        const products = await Product.find({
+            $or: [
+                { name: { $regex: query, $options: "i" } },
+                { brand: { $regex: query, $options: "i" } },
+                { category: { $regex: query, $options: "i" } }
+            ]
+        });
+
+        if (products.length === 0) {
+            return successResponse(res, "No products found", []);
+        }
+
+        return successResponse(res, "Products fetched successfully", products);
+    } catch (err) {
+        console.error("Product search error:", err);
+        return errorResponse(res, err.message, 500);
+    }
+};

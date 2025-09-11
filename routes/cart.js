@@ -8,6 +8,7 @@ router.post("/create-order", authMiddleware(), cartController.createRazorpayOrde
 router.post("/verify-payment", authMiddleware(), cartController.verifyPayment);
 router.get("/payment/:orderId", authMiddleware(), cartController.getPaymentDetails);
 router.get("/orders", authMiddleware(), cartController.getAllOrders);
+router.delete("/orders/:orderId", authMiddleware(), cartController.deleteOrder);
 
 // Your existing routes
 router.post("/add", authMiddleware(), cartController.addToCart);

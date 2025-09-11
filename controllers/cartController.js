@@ -253,3 +253,25 @@ exports.getAllOrders = async (req, res) => {
         return errorResponse(res, err.message, 500);
     }
 };
+
+exports.deleteOrder = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+
+        if (!orderId) {
+            return errorResponse(res, "Order ID is required", 400);
+        }
+
+        const order = await Order.findById(orderId);
+        if (!order) {
+            return errorResponse(res, "Order not found", 404);
+        }
+
+        await Order.findByIdAndDelete(orderId);
+
+        return successResponse(res, "Order deleted successfully", { deletedOrderId: orderId });
+    } catch (err) {
+        console.error("Delete order error:", err);
+        return errorResponse(res, err.message, 500);
+    }
+};
