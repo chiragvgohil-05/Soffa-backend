@@ -1,3 +1,4 @@
+const User = require("../models/User");
 const Cart = require("../models/Cart");
 const Product = require("../models/Product");
 const Order = require("../models/Order"); // You'll need to create an Order model
@@ -133,9 +134,26 @@ exports.clearCart = async (req, res) => {
 };
 
 // Create Razorpay Order
+// Create Razorpay Order
+// Create Razorpay Order
 exports.createRazorpayOrder = async (req, res) => {
     try {
-        const cart = await Cart.findOne({ user: req.user.id }).populate("items.product");
+        const userId = req.user.id;
+
+        // Fetch user profile
+        const user = await require("../models/User").findById(userId);
+        if (!user) return errorResponse(res, "User not found", 404);
+
+        // Check if mobile and address are present
+        if (!user.mobile || !user.address) {
+            return errorResponse(
+                res,
+                "Please add your mobile number and address in your profile before placing an order",
+                400
+            );
+        }
+
+        const cart = await Cart.findOne({ user: userId }).populate("items.product");
         if (!cart || cart.items.length === 0) {
             return errorResponse(res, "Cart is empty", 400);
         }
@@ -155,11 +173,16 @@ exports.createRazorpayOrder = async (req, res) => {
 
         // Create order in database with pending status
         const dbOrder = new Order({
-            user: req.user.id,
+            user: userId,
             items: cart.items,
             totalAmount: amount / 100, // Convert back to rupees
             razorpayOrderId: order.id,
             status: "pending",
+            shippingAddress: {
+                name: user.name,
+                address: user.address,
+                phone: user.mobile,
+            },
         });
 
         await dbOrder.save();

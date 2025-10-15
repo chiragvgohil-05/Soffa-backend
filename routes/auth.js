@@ -1,5 +1,5 @@
 const express = require("express");
-const { registerUser, loginUser, getProfile, forgotPassword, editProfile, getAllUsers } = require("../controllers/authController");
+const { registerUser, loginUser, getProfile, forgotPassword, editProfile, getAllUsers, deleteUser } = require("../controllers/authController");
 const authMiddleware = require("../middleware/authMiddleware");
 const multer = require("multer");
 
@@ -11,6 +11,7 @@ router.post("/register", registerUser);
 router.post("/login", loginUser);
 router.post("/forgot-password", forgotPassword);
 router.get("/users", authMiddleware(["Admin"]), getAllUsers);
+router.delete("/users/:id", authMiddleware(["Admin"]), deleteUser);
 
 // User route (only logged-in users)
 router.get("/profile", authMiddleware(["User", "Admin"]), getProfile);

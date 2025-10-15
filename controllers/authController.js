@@ -108,21 +108,24 @@ exports.forgotPassword = async (req, res) => {
 };
 
 // EDIT PROFILE
+// EDIT PROFILE
 exports.editProfile = async (req, res) => {
     try {
-        const { name, email, password, image } = req.body;
+        const { name, email, password, image, mobile, address } = req.body;
 
         const user = await User.findById(req.user.id);
         if (!user) return errorResponse(res, "User not found", 404);
 
         if (name) user.name = name;
         if (email) user.email = email;
+        if (mobile) user.mobile = mobile;
+        if (address) user.address = address;
         if (password) {
             const salt = await bcrypt.genSalt(10);
             user.password = await bcrypt.hash(password, salt);
         }
 
-        // Cloudinary upload (base64 or file)
+        // Cloudinary upload
         if (image) {
             const uploaded = await cloudinary.uploader.upload(image, {
                 folder: "user_profiles",
@@ -142,6 +145,8 @@ exports.editProfile = async (req, res) => {
             id: user._id,
             name: user.name,
             email: user.email,
+            mobile: user.mobile,
+            address: user.address,
             role: user.role,
             image: user.image || null,
         });
@@ -157,5 +162,21 @@ exports.getAllUsers = async (req, res) => {
         return successResponse(res, "Users fetched successfully", users);
     } catch (err) {
         return errorResponse(res, err.message, 500);
+    }
+};
+exports.deleteUser = async (req, res) => {
+    try {
+        const userId = req.params.id; // assuming you pass the user ID in the URL
+        const user = await User.findById(userId);
+
+        if (!user) {
+            return errorResponse(res, "User not found", 404);
+        }
+
+        await user.deleteOne(); // remove the user from DB
+        return successResponse(res, "User deleted successfully.", { id: userId });
+    } catch (err) {
+        console.error("Delete User Error:", err);
+        return errorResponse(res, "Server Error", 500);
     }
 };

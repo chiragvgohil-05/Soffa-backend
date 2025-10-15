@@ -20,7 +20,8 @@ app.use("/api/auth", require("./routes/auth"));
 app.use("/api/products", require("./routes/product")); // ✅ Added product routes
 app.use("/api/admin", require("./routes/adminRoutes")); // ✅ Added product routes
 app.use("/api/cart", require("./routes/cart")); // ✅ Added product routes
-
+const adminOrderRoutes = require("./routes/adminOrder");
+app.use("/api/admin/orders", adminOrderRoutes);
 // Default route (optional)
 app.get("/", (req, res) => {
     res.send("API is running...");
