@@ -169,34 +169,38 @@ exports.createRazorpayOrder = async (req, res) => {
             payment_capture: 1, // Auto capture payment
         };
 
-        const order = await razorpay.orders.create(options);
+        const razorpayOrder = await razorpay.orders.create(options);
 
-        // Create order in database with pending status
+        // Create order in database with proper dates
         const dbOrder = new Order({
             user: userId,
             items: cart.items,
             totalAmount: amount / 100, // Convert back to rupees
-            razorpayOrderId: order.id,
-            status: "pending",
+            razorpayOrderId: razorpayOrder.id,
+            status: "processing", // Set to processing when payment is initiated
+            orderDate: new Date(), // Explicitly set order date
             shippingAddress: {
                 name: user.name,
                 address: user.address,
                 phone: user.mobile,
+                city: user.city || "",
+                state: user.state || "",
+                pincode: user.pincode || "",
             },
         });
 
         await dbOrder.save();
 
         return successResponse(res, "Razorpay order created", {
-            order: order,
+            order: razorpayOrder,
             orderId: dbOrder._id,
+            dbOrder: dbOrder // Return the database order for reference
         });
     } catch (err) {
         console.error("Razorpay order error:", err);
         return errorResponse(res, err.message, 500);
     }
 };
-
 // Verify Payment
 exports.verifyPayment = async (req, res) => {
     try {
@@ -209,18 +213,30 @@ exports.verifyPayment = async (req, res) => {
             .digest("hex");
 
         if (generatedSignature !== razorpay_signature) {
+            // Update order status to failed
+            await Order.findByIdAndUpdate(orderId, {
+                status: "failed",
+                failedAt: new Date()
+            });
             return errorResponse(res, "Payment verification failed", 400);
         }
 
-        // Update order status in database
+        // Update order status in database with proper date
         const order = await Order.findById(orderId);
         if (!order) {
             return errorResponse(res, "Order not found", 404);
         }
 
+        const paymentDate = new Date();
+
         order.status = "completed";
         order.razorpayPaymentId = razorpay_payment_id;
-        order.paidAt = new Date();
+        order.paidAt = paymentDate;
+        // If orderDate wasn't set during creation, set it now
+        if (!order.orderDate) {
+            order.orderDate = paymentDate;
+        }
+
         await order.save();
 
         // Clear the user's cart
@@ -229,13 +245,26 @@ exports.verifyPayment = async (req, res) => {
             { items: [], totalPrice: 0 }
         );
 
-        return successResponse(res, "Payment verified successfully", { order });
+        return successResponse(res, "Payment verified successfully", {
+            order,
+            paymentDate: paymentDate.toISOString()
+        });
     } catch (err) {
         console.error("Payment verification error:", err);
+
+        // Mark order as failed in case of error
+        try {
+            await Order.findByIdAndUpdate(orderId, {
+                status: "failed",
+                failedAt: new Date()
+            });
+        } catch (updateError) {
+            console.error("Failed to update order status:", updateError);
+        }
+
         return errorResponse(res, err.message, 500);
     }
 };
-
 // Get Payment Details
 exports.getPaymentDetails = async (req, res) => {
     try {
@@ -254,29 +283,49 @@ exports.getPaymentDetails = async (req, res) => {
 
 exports.getAllOrders = async (req, res) => {
     try {
-        // Optional: add query filters like status, date range, user
-        const { status, userId, fromDate, toDate } = req.query;
+        const orders = await Order.find()
+            .populate("user", "name email mobile address")
+            .populate("items.product", "name price")
+            .sort({ orderDate: -1, createdAt: -1 }); // Sort by order date descending
 
-        let filter = {};
-        if (status) filter.status = status;
-        if (userId) filter.user = userId;
-        if (fromDate || toDate) {
-            filter.createdAt = {};
-            if (fromDate) filter.createdAt.$gte = new Date(fromDate);
-            if (toDate) filter.createdAt.$lte = new Date(toDate);
-        }
-
-        const orders = await Order.find(filter)
-            .populate("user", "name email") // fetch user info
-            .populate("items.product", "name price"); // fetch product info
-
-        return successResponse(res, "Orders fetched successfully", { orders });
-    } catch (err) {
-        console.error("Get all orders error:", err);
-        return errorResponse(res, err.message, 500);
+        res.status(200).json({
+            success: true,
+            count: orders.length,
+            orders: orders.map(order => ({
+                ...order.toObject(),
+                orderDate: order.orderDate || order.createdAt, // Fallback to createdAt if orderDate not set
+                formattedOrderDate: (order.orderDate || order.createdAt).toLocaleDateString('en-IN'),
+                formattedPaidAt: order.paidAt ? order.paidAt.toLocaleDateString('en-IN') : null
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
     }
 };
 
+exports.getOrderById = async (req, res) => {
+    try {
+        const order = await Order.findById(req.params.orderId)
+            .populate("user", "name email mobile address")
+            .populate("items.product", "name price images");
+
+        if (!order) {
+            return res.status(404).json({ success: false, message: "Order not found" });
+        }
+
+        // Ensure proper date formatting
+        const orderWithFormattedDates = {
+            ...order.toObject(),
+            orderDate: order.orderDate || order.createdAt,
+            formattedOrderDate: (order.orderDate || order.createdAt).toLocaleDateString('en-IN'),
+            formattedPaidAt: order.paidAt ? order.paidAt.toLocaleDateString('en-IN') : 'Not Paid'
+        };
+
+        res.status(200).json({ success: true, order: orderWithFormattedDates });
+    } catch (error) {
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
 exports.deleteOrder = async (req, res) => {
     try {
         const { orderId } = req.params;

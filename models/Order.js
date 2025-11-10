@@ -38,8 +38,12 @@ const orderSchema = new mongoose.Schema(
         },
         status: {
             type: String,
-            enum: ["pending", "completed", "failed", "cancelled"],
+            enum: ["pending", "completed", "failed", "cancelled", "processing"],
             default: "pending",
+        },
+        orderDate: {
+            type: Date,
+            default: Date.now,
         },
         paidAt: {
             type: Date,
@@ -54,7 +58,7 @@ const orderSchema = new mongoose.Schema(
         },
     },
     {
-        timestamps: true,
+        timestamps: true, // This adds createdAt and updatedAt automatically
     }
 );
 
