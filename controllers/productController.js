@@ -60,10 +60,47 @@ exports.createProduct = async (req, res) => {
 };
 
 // GET all Products
+// GET all Products with Pagination
 exports.getProducts = async (req, res) => {
     try {
-        const products = await Product.find();
-        return successResponse(res, "Products fetched successfully", products);
+        // 👉 Extract page, limit, and search from query
+        let { page = 1, limit = 10, search = "" } = req.query;
+
+        page = Number(page);
+        limit = Number(limit);
+
+        // 👉 Build search filter
+        let filter = {};
+        if (search.trim()) {
+            filter.name = { $regex: search.trim(), $options: "i" };
+        }
+
+        // 👉 Count total documents matching filter
+        const total = await Product.countDocuments(filter);
+
+        // 👉 Calculate pagination
+        const totalPages = Math.ceil(total / limit);
+        const skip = (page - 1) * limit;
+
+        // 👉 Fetch paginated products
+        const products = await Product.find(filter)
+            .skip(skip)
+            .limit(limit)
+            .sort({ createdAt: -1 });
+
+        // 👉 Response with meta
+        return successResponse(res, "Products fetched successfully", {
+            data: products,
+            meta: {
+                total,
+                page,
+                limit,
+                totalPages,
+                hasNextPage: page < totalPages,
+                hasPrevPage: page > 1
+            }
+        });
+
     } catch (err) {
         return errorResponse(res, err.message, 500);
     }
